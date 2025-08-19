@@ -3,6 +3,6 @@ project(POS_system)
 
 set(CMAKE_CXX_STANDARD 20)
 
-add_executable(POS_system main.cpp src/sqlite3.c)
+add_executable(POS_system main.cpp src/sqlite3.c src/db/Database.cpp)
 
 target_include_directories(POS_system PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

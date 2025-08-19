@@ -157,9 +157,9 @@ pos.db — сама база данных SQLite
 **2. CustomerService**
 Управление клиентами и их покупками.
 Методы:
-- `registerCustomer(name, email, phone)` — регистрация нового клиента.
-- `updateCustomer(id, name, email, phone)` — обновление данных клиента.
-- `deleteCustomer(id)` — удаление клиента (мягкое или жесткое, в зависимости от требований).
+- `registerCustomer(name, email, phone, address, birth_date, additional_contact)` — регистрация нового клиента.
+- `updateCustomer(id, name, email, phone, address, birth_date, additional_contact)` — обновление данных клиента.
+- `deleteCustomer(id)` — удаление клиента из базы данных
 - `getAllCustomers()` — список всех клиентов.
 - `getCustomerById(id)` — информация о клиенте.
 - `getCustomerPurchases(id)` — возврат истории покупок клиента.
@@ -263,7 +263,11 @@ CREATE TABLE customers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     email TEXT,
-    phone TEXT
+    phone TEXT,
+    address TEXT,
+    loyalty_status TEXT DEFAULT 'regular',
+    birth_date TEXT,
+    additional_contact TEXT
 );
 
 -- Таблица продуктов
@@ -304,3 +308,231 @@ CREATE TABLE sale_items (
 
 ## Реализация
 
+### Интерфейс - ui
+
+Итак, как и было сказано ранее компоненты интерфейся располагаются в папках `\src\ui` и `\include\ui`, там располгаются файлы `ConsoleUI.cpp` и `ConsoleUI.h` соответственно. Поскольку пока что я хочу реализовать консольное приложение, то взаимодействие пользователя с программой будет осуществляться через консоль.
+Пользователю должны быть доступны все методы, которые будут реалзованы в `...Servis`, то есть он должен иметь возможность просмотреть доступные функции и выбрать необходимые. Таким образом мы приходим к нехитрой мысли - класс `ConsoleUI` должен иметь доступ к объектам классов `...Servis`, но тут же возникает другой вопрос - а должен ли интерфейс сам создавать сервисы или же иметь к ним доступ только по ссылке? Немного подумав, я решил, что `ConsoleUI` должен отвечать только за взаимодействие с пользователем - ввод/вывод данных. То есть сервисы будут создаваться в `main`, а `ConsoleUI` будет хранить ссылки на них.
+Реализуемый класс будет обладать единственным методом - `run()`, который с свою очередь будет выводить в консоль главное меню:
+
+```c++
+void showMainMenu() {
+    std::cout << "\n==== POS System ====\n";
+    std::cout << "1. Product management\n";
+    std::cout << "2. Sales\n";
+    std::cout << "3. Customers\n";
+    std::cout << "4. Employees\n";
+    std::cout << "5. Reports\n";
+    std::cout << "0. Exit\n";
+    std::cout << "Select an action: ";
+}
+```
+И взависимости от выбора пользователя вызывать функции: 
+- `handleCustomer()` - управление работниками
+- `handleEmployee()` - управление персооналом
+- `handleProduct()` - управление с реализуемыми продуктами
+- `handleSale()` - упраление списком продаж
+- `ReportGenerator()` - создание отчётов
+
+Все эти функции будут иметь схожую реализацию поэтому, более подробно мы рассмотри лишь одну из них - `handleCustomer()`. Поведение этой функции в сущности похоже на то, что делает `run()`, то есть выводит меню, где описывается функционал, который доступен пользователю при взаимодействии с таблицей `customers`:
+
+```c++
+void showCustomersMenu() {
+    std::cout << "\n==== Customers_Servise menu ====\n";
+    std::cout << "1. Registering a new client\n";
+    std::cout << "2. Updating client data\n";
+    std::cout << "3. Removing a client from the database\n";
+    std::cout << "4. List of all clients\n";
+    std::cout << "5. Customer information\n";
+    std::cout << "6. Customer's purchase history\n";
+    std::cout << "7. Customer search by email or phone\n";
+    std::cout << "0. Exit\n";
+    std::cout << "Select an action: ";
+}
+```
+
+В зависимости от выбора пользователя `handleCustomer()` вызывает вспомогательные функции: `console_registerCustomer()`, `console_updateCustomer()` и т.д. Они необходимы для ввода доп информации для вызова соответствующих функции из `CustomerService`, а так же для вывода результата, если это необходимо.
+
+Собственно говоря примерно так и будет выглядеть реализация интерфейса.
+
+
+
+### Взаимодействие с БД 
+
+#### Класс Database
+
+Итак, основным назначением этого класса является обработка запросов к базе данных, поступающих из DAO, или же инкапсуляция SQL: класс полностью скрывает детали работы с SQLite API, а также предоставляет простой интерфейс для выполнения запросов.
+
+<u>Интерфейс:</u>
+- `executeQuery` - для `SELECT` запросов (возвращает вектор строк)
+- `executeUpdate` - для `INSERT/UPDATE/DELETE` (возвращает `bool`)
+- Поддержка транзакций
+
+Подробней поговорим про реализацию:
+**1. Конструктор**
+
+```c++
+Database::Database(const std::string& path) {
+    if (sqlite3_open(path.c_str(), &db_) != SQLITE_OK) {
+        throw std::runtime_error("Cannot open database: " + std::string(sqlite3_errmsg(db_)));
+    }
+}
+```
+
+Принимает путь к базе данных (как относительный, так и абсолютный) и совершает попытку её открыть, в случае успеха мы инициализируем поле `db_` - наше подключение, в противном случае кидаем ошибку
+
+**2. Деструктор**
+
+```c++
+Database::~Database() {
+    if (db_) {
+        sqlite3_close(db_);
+    }
+}
+```
+
+Закрывает соедиyение если таковое было открыто, при текущей реализации проверка на то, открыто ли соединие - излишняя, посколько если соединение открыть не получится, то конструктор бросит исключение, но я её всё же оставлю.
+
+
+**3. Оператор присваивания и конструктор копирования**
+
+```c++
+Database(const Database&) = delete;
+Database& operator=(const Database&) = delete;
+```
+
+Как вы могли догадаться - они запрещены, сразу по нескольким причинам:
+- Нам важна уникальность подключения к БД
+- Проблемы с транзакциями
+
+**4. Метод `executeQuery`**
+
+Метод, для выполнения запросов, содержащих `SELECT`. Рассказ про этот метод я предлагаю начать с его самой что ни на есть наивной реализации:
+
+```c++
+
+using Row = std::unordered_map<std::string, std::string>;
+using Rows = std::vector<Row>;
+
+void sqlite_callback(void* data, int num_columns, char** columns, char** col_names) {
+    Rows& rows = *static_cast<Rows*>(data);
+    Row row;
+
+    for (int i = 0; i < num_columns; ++i) {
+        const char* col_name = col_names[i] ? col_names[i] : "NULL";
+        const char* col_value = columns[i] ? columns[i] : "NULL";
+        row[col_name] = col_value;
+    }
+
+    rows.push_back(std::move(row));
+    return 0;
+}
+
+
+Rows executeQuery(const std::string& sql) {
+    Rows rows;
+    char *errmsg = NULL;
+
+    int result = sqlite3_exec(db_, sql.c_str(), sqlite_callback, &rows, &errmsg);
+
+    if (result != SQLITE_OK) {
+        std::string error = errmsg ? errmsg : "Unknown error";
+        sqlite3_free(errmsg);
+        throw std::runtime_error(string("Error: ") + errmsg);
+    }
+    return rows;
+}
+```
+
+Прошу не судить слишком строго - это тестовый пример и я его даже не компилировал, его можно было реализовать немного по-другому, но давайте рассмотрим эту реализацию более маштабно и выделим его главную слабость - использование функции `sqlite3_exec()`, и, пожалуй, я возьму на себя ответственность более менее подробно объяснить, почему же в действительности эта функция может стать проблемной. 
+Проведём кратрий ликбез по тому, как работает выбранная мною функция, когда `sqlite3_exec()` выполняет запрос, содеджащий `SELECT`, она без предварительных проверок компилирует запрос и выполняет его, тут нужно уточнить, если вы сделали ошибку в синтаксисе, то, конечно, ничего не скомпилируется, а если в запросе присутствует SQL-инъекция, то она не будет выявлена, то есть проверка на их наличие в запросе ложится на вызывающую функцию, что не вполне удобно.
+Таким образом мы и приходим к решению проблемы - использование подготовленных запросов. Их применение благоприятно сказывается как на производительности, так и на использование памяти, но главное - они инкапсулируют в себе проверку на наличие SQL-инъекций,посредством функции биндинга (`sqlite3_bind_*`). И если первые два преимущества проявляют себя лишь при многократном вызове запросов с одним шаблоном, то последний будет исполняться всегда.
+Поэтому итоговый вариант реализации этой функции будет выглядеть так:
+
+```c++
+Rows Database::executeQuery(const std::string& sql, const std::vector<std::string>& params) {
+    checkDbNotNull();
+    sqlite3_stmt* stmt = nullptr;
+    Rows rows;
+
+    // Поготовка запроса
+    checkOk(sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr), 
+          "Failed to prepare statement");
+
+    try {
+        // Привязка данных (заполнение placeholder-ов)
+        for (int i = 0; i < params.size(); ++i) {
+            checkOk(sqlite3_bind_text(stmt, i + 1, params[i].c_str(), -1, SQLITE_TRANSIENT),
+                  "Failed to bind parameter");
+        }
+
+        while (true) {
+            // Выполнение запроса
+            int rc = sqlite3_step(stmt);
+            if (rc == SQLITE_ROW) {
+                Row row;
+                int colCount = sqlite3_column_count(stmt);
+                for (int i = 0; i < colCount; ++i) {
+                    const char* colName = sqlite3_column_name(stmt, i);
+                    const char* colValue = reinterpret_cast<const char*>(sqlite3_column_text(stmt, i));
+                    row[colName] = colValue ? colValue : "NULL";
+                }
+                rows.push_back(row);
+            } else if (rc == SQLITE_DONE) {
+                break;
+            } else {
+                throw std::runtime_error(std::string("Failed to execute query") + ": " + sqlite3_errmsg(db_));
+            }
+        }
+    } catch (...) {
+        sqlite3_finalize(stmt);
+        throw;
+    }
+
+    sqlite3_finalize(stmt);
+    return rows;
+}
+```
+
+В коде я уже оговорился, за что отвечает каждый его кусок, тут я лишь подробней напишу про обраблтку ошибок и вспомогательные функции:
+- Обработка исключений: если функция `sqlite3_prepare_v2` завершится неудачно, то нам достаточно бросить исключение, при неудачной папытке скомпилировать запрос выделенные ресурсы освобождаются автоматически, совсем иначе обстоит ситуация с функциями `sqlite3_bind_*` и `sqlite3_step`, в случае ошибки мо должны самостоятельно освободить выделенные ресурсы с помощью `sqlite3_finalize` и только после этого бросить исключение, именно это я и релизовал
+- Функция `checkDbNotNull` - проверяет, открыто ли соединение с базой данных, в случае, если оно закрыто, кидает исключение
+- Функция `checkOk` - проверяет успешно ли завершились функции `sqlite3_bind_*` и `sqlite3_prepare_v2`, в случае неудачи кидает исключение
+Так же хотел бы обратить отдельно внимание на выбор параметров для `Row` и `Rows`, я хотел было использовать `std::variant`, размышляя над тем, что не слишком оптимально хранить целые и дробные числа в строке, но решил, что игра не стоит свечи) Возможно неленивый читатель предложит более оптимальный вариант хранения результатов запросов, но пока что я остановлюсь на самом простом и понятном варианте.
+
+
+**4. Метод `executeUpdate`**
+
+Метод, предназначенный для выполнения запростов не возвращающих данных (`INSERT/UPDATE/DELETE`). Я не буду подробно про него рассказывать, поскольку в его основе лежат все те же идеи, что я реализовал в методе `executeQuery`, приведу код с комментариями
+
+```c++
+bool Database::executeUpdate(const std::string& sql, const std::vector<std::string>& params) {
+    checkDbNotNull();
+    sqlite3_stmt* stmt = nullptr;
+    
+    // Подготовка запроса (компиляция)
+    checkOk(sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr),
+          "Failed to prepare statement");
+
+    try {
+        // Привязка параметров (заполнение plaseholder-ов)
+        for (int i = 0; i < params.size(); ++i) {
+            checkOk(sqlite3_bind_text(stmt, i + 1, params[i].c_str(), -1, SQLITE_TRANSIENT),
+                  "Failed to bind parameter");
+        }
+    } catch (...) {
+        sqlite3_finalize(stmt);
+        throw;
+    }
+
+    // Исполнение запроса
+    int rc = sqlite3_step(stmt);
+    // Освобождение выделенных ресурсов
+    sqlite3_finalize(stmt);
+
+    if (rc == SQLITE_DONE) {
+        return true;
+    } else {
+        throw std::runtime_error(std::string("Failed to execute update") + ": " + sqlite3_errmsg(db_));
+    }
+}
+```

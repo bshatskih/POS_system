@@ -1,97 +1,81 @@
 #include <iostream>
-#include <iomanip>
-#include <vector>
-#include <string>
-#include <cstring>
-#include "sqlite3.h"
+#include <include/sqlite3.h>
+// #include <include/db/Database.h>
+// #include <include/db/CustomerDAO.h>
+// #include <include/db/EmployeeDAO.h>
+// #include <include/db/ProductDAO.h>
+// #include <include/db/SaleDAO.h>
+// #include <include/logic/CustomerService.h>
+// #include <include/logic/EmployeeService.h>
+// #include <include/logic/ProductService.h>
+// #include <include/logic/SaleService.h>
+// #include <include/logic/ReportGenerator.h>
+// #include <include/ui/ConsoleUI.h>
 
-// Глобальные переменные для хранения данных о колонках
-std::vector<std::string> columns;
-std::vector<std::vector<std::string>> rows;
-std::vector<size_t> column_widths;
 
-static int callback(void *NotUsed, int argc, char **argv, char **azColName) {
-    // Если это первый вызов - сохраняем названия колонок
-    if (columns.empty()) {
-        for (int i = 0; i < argc; i++) {
-            columns.push_back(azColName[i]);
-            column_widths.push_back(strlen(azColName[i]));
-        }
-    }
-    
-    // Сохраняем данные строки
-    std::vector<std::string> row;
-    for (int i = 0; i < argc; i++) {
-        std::string value = argv[i] ? argv[i] : "NULL";
-        row.push_back(value);
-        if (value.length() > column_widths[i]) {
-            column_widths[i] = value.length();
-        }
-    }
-    rows.push_back(row);
-    
+
+
+int callback(
+    void *user_data,   // То же, что передано в sqlite3_exec
+    int num_columns,   // Количество колонок в строке
+    char **columns,    // Массив значений колонок (строки в UTF-8)
+    char **col_names   // Массив названий колонок
+) {
+    std::cout << "Now works callback function\n";
     return 0;
 }
 
-void print_table() {
-    // Вычисляем общую ширину таблицы
-    size_t total_width = 1; // начинаем с 1 для правой границы
-    for (size_t width : column_widths) {
-        total_width += width + 3; // +3 для " | "
-    }
-    
-    // Верхняя граница таблицы
-    std::cout << std::string(total_width, '-') << std::endl;
-    
-    // Заголовки колонок
-    std::cout << "|";
-    for (size_t i = 0; i < columns.size(); i++) {
-        std::cout << " " << std::left << std::setw(column_widths[i]) << columns[i] << " |";
-    }
-    std::cout << std::endl;
-    
-    // Граница под заголовками
-    std::cout << std::string(total_width, '-') << std::endl;
-    
-    // Данные строк
-    for (const auto& row : rows) {
-        std::cout << "|";
-        for (size_t i = 0; i < row.size(); i++) {
-            std::cout << " " << std::left << std::setw(column_widths[i]) << row[i] << " |";
-        }
-        std::cout << std::endl;
-    }
-    
-    // Нижняя граница таблицы
-    std::cout << std::string(total_width, '-') << std::endl;
-}
+
 
 int main() {
-    sqlite3* db;
-    char *err_msg = nullptr;
-    int rc = sqlite3_open("../../SQLite_test_project/new_bd.sqlite", &db);
+    // 1. Создаём базу данных (ядро системы)
+    // Database db("data/pos.db");
 
-    if (rc != SQLITE_OK) {
-        std::cerr << "Error opening database: " << sqlite3_errmsg(db) << std::endl;
-        return 1;
+    // // 2. Инициализируем DAO
+    // ProductDAO productDAO(db);
+    // SaleDAO saleDAO(db);
+    // CustomerDAO customerDAO(db);
+    // EmployeeDAO employeeDAO(db);
+
+    // // 3. Создаём сервисы
+    // ProductService productService(productDAO);
+    // SaleService saleService(saleDAO, productService);
+    // CustomerService customerService(customerDAO);
+    // EmployeeService employeeService(employeeDAO);
+
+
+    // // 4. Запускаем UI
+    // ConsoleUI ui(productService, saleService, customerService, employeeService);
+    // ui.run();
+
+    sqlite3* bd;
+    char* error_msg = nullptr;
+
+    if (sqlite3_open("../../SQLite_test_project/new_bd.sqlite", &bd) == SQLITE_OK) {
+        std::cout << "Database opened\n";
+    } else {
+        std::cout << "Error: " << sqlite3_errmsg(bd) << '\n';
     }
 
-    // ... (остальной код создания и заполнения таблицы остается таким же)
+    // int result = sqlite3_exec(bd, "INSERT INTO [Subject] ([name]) VALUES ('Basic Python')", nullptr, nullptr, &error_msg);
 
-    const char* sql_SELECT = "SELECT * FROM Teacher";
-    rc = sqlite3_exec(db, sql_SELECT, callback, 0, &err_msg);
-    if (rc != SQLITE_OK) {
-        std::cerr << "SQL error (SELECT): " << err_msg << std::endl;
-        sqlite3_free(err_msg);
-        sqlite3_close(db);
-        return 1;
+    // if (result == SQLITE_OK) {
+    //     std::cout << "Good request\n";
+    // } else {
+    //     std::cout << "Request error: " << error_msg << '\n';
+    //     sqlite3_free(error_msg);
+    // }
+
+
+    int result = sqlite3_exec(bd, "DELETE FROM [Subject] WHERE [name] = 'Basic Python'", callback, nullptr, &error_msg);
+
+    if (result == SQLITE_OK) {
+        std::cout << "Good request\n";
+    } else {
+        std::cout << "Request error: " << error_msg << '\n';
+        sqlite3_free(error_msg);
     }
 
-    // Выводим таблицу
-    print_table();
-
-    std::cout << "Database operations completed successfully!" << std::endl;
-
-    sqlite3_close(db);
+    sqlite3_close(bd);
     return 0;
 }
